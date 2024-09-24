@@ -1,118 +1,206 @@
 #include "ws_server.h"
 #include <iostream>
-#include <opencv2/opencv.hpp>
+#include <utility>
 
-WebSocketServer::WebSocketServer(int port, Detector &detector) : port(port), detector(detector)
-{
-    // No need to start the processing thread
+// Constructor
+WebSocketServer::WebSocketServer(const int port, std::string modelConfiguration, std::string modelWeights,
+                                 std::string classesFile, const float confThreshold, const float nmsThreshold) :
+    port(port), isRunning(true), numThreads(std::thread::hardware_concurrency()),
+    modelConfiguration(std::move(modelConfiguration)), modelWeights(std::move(modelWeights)),
+    classesFile(std::move(classesFile)), confThreshold(confThreshold), nmsThreshold(nmsThreshold), clientIdCounter(0) {
+    if (numThreads == 0) {
+        numThreads = 4; // Default to 4 threads if hardware_concurrency can't detect
+    }
+    std::cout << "WebSocketServer initialized with " << numThreads << " worker threads." << std::endl;
 }
 
-WebSocketServer::~WebSocketServer()
-{
-    // No need to join any threads
+// Destructor
+WebSocketServer::~WebSocketServer() {
+    isRunning = false;
+    queueCondVar.notify_all();
+
+    // Join worker threads
+    for (auto &thread : workerThreads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    std::cout << "WebSocketServer shutting down." << std::endl;
 }
 
-void WebSocketServer::run()
-{
+void WebSocketServer::run() {
+    // Start worker threads
+    uWS::Loop *loop = uWS::Loop::get();
+
+    for (int i = 0; i < numThreads; ++i) {
+        workerThreads.emplace_back(&WebSocketServer::workerFunction, this, loop);
+    }
+
     uWS::App()
         .ws<PerSocketData>("/*",
                            {.compression = uWS::SHARED_COMPRESSOR,
                             .maxPayloadLength = 50 * 1024 * 1024, // 50 MB
                             .idleTimeout = 10,
-                            .open = [](auto *ws) { std::cout << "Client connected" << std::endl; },
+                            .open =
+                                [this](auto *ws) {
+                                    uint64_t clientId = clientIdCounter++;
+                                    ws->getUserData()->clientId = clientId;
+
+                                    {
+                                        std::lock_guard<std::mutex> lock(clientsMutex);
+                                        clients[clientId] = ws;
+                                        lastSentFrame[clientId] = 0; // Initialize last sent frame number to 0
+                                        nextFrameNumber[clientId] = 1; // Initialize next frame number
+                                    }
+
+                                    std::cout << "Client connected, ID: " << clientId << std::endl;
+                                },
                             .message =
-                                [this](auto *ws, std::string_view message, uWS::OpCode opCode)
-                            {
-                                std::cout << "Received a message with opcode: " << static_cast<int>(opCode)
-                                          << ", message size: " << message.size() << std::endl;
+                                [this](auto *ws, std::string_view message, uWS::OpCode opCode) {
+                                    std::cout << "Received a message with opcode: " << opCode
+                                              << ", message size: " << message.size() << std::endl;
 
-                                // Expecting binary data (image)
-                                if (opCode == uWS::OpCode::BINARY)
-                                {
-                                    std::cout << "Processing binary message" << std::endl;
+                                    if (opCode == uWS::OpCode::BINARY) {
+                                        uint64_t clientId = ws->getUserData()->clientId;
 
-                                    try
-                                    {
-                                        // Decode the image
-                                        std::vector<uchar> data(message.begin(), message.end());
-                                        cv::Mat img = cv::imdecode(data, cv::IMREAD_COLOR);
-                                        if (img.empty())
-                                        {
-                                            std::cerr << "Failed to decode image" << std::endl;
-                                            return;
+                                        try {
+                                            std::vector<uchar> data(message.begin(), message.end());
+                                            cv::Mat img = cv::imdecode(data, cv::IMREAD_COLOR);
+                                            if (img.empty()) {
+                                                std::cerr << "Failed to decode image" << std::endl;
+                                                return;
+                                            }
+
+                                            {
+                                                std::lock_guard<std::mutex> lock(queueMutex);
+                                                frameQueue.emplace(img, clientId);
+                                            }
+                                            queueCondVar.notify_one();
+                                        } catch (const std::exception &e) {
+                                            std::cerr << "Exception during message processing: " << e.what()
+                                                      << std::endl;
                                         }
-
-                                        std::cout << "Image decoded successfully" << std::endl;
-
-                                        // Process the frame using the detector
-                                        detector.detect(img);
-
-                                        std::cout << "Image processed by detector" << std::endl;
-
-                                        // Encode the processed image to JPEG
-                                        std::vector<uchar> buf;
-                                        cv::imencode(".jpg", img, buf);
-                                        std::string encodedImage(buf.begin(), buf.end());
-
-                                        std::cout << "Image encoded successfully, sending back to client" << std::endl;
-
-                                        // Send back the processed image
-                                        ws->send(encodedImage, uWS::OpCode::BINARY);
+                                    } else {
+                                        std::cerr << "Received non-binary message with opcode: " << opCode << std::endl;
                                     }
-                                    catch (const std::exception &e)
+                                },
+                            .close =
+                                [this](auto *ws, int /*code*/, std::string_view /*message*/) {
+                                    uint64_t clientId = ws->getUserData()->clientId;
+
                                     {
-                                        std::cerr << "Exception during message processing: " << e.what() << std::endl;
+                                        std::lock_guard<std::mutex> lock(clientsMutex);
+                                        clients.erase(clientId);
+                                        frameBuffer.erase(clientId); // Clean up the frame buffer
+                                        lastSentFrame.erase(clientId);
+                                        nextFrameNumber.erase(clientId);
                                     }
-                                }
-                                else
-                                {
-                                    std::cerr << "Received non-binary message with opcode: " << static_cast<int>(opCode)
-                                              << std::endl;
-                                }
-                            },
-                            .close = [](auto *ws, int, std::string_view)
-                            { std::cout << "Client disconnected" << std::endl; }})
+
+                                    std::cout << "Client disconnected, ID: " << clientId << std::endl;
+                                }})
         .listen(port,
-                [this](auto *listenSocket)
-                {
-                    if (listenSocket)
-                    {
+                [this](const auto *listenSocket) {
+                    if (listenSocket) {
                         std::cout << "Server listening on port " << port << std::endl;
-                    }
-                    else
-                    {
+                    } else {
                         std::cerr << "Failed to listen on port " << port << std::endl;
                     }
                 })
         .run();
+
+    // Stop the server
+    isRunning = false;
+    queueCondVar.notify_all();
 }
 
-// void WebSocketServer::processImages()
-// {
-//     while (isRunning)
-//     {
-//         std::unique_lock<std::mutex> lock(queueMutex);
-//         queueCondVar.wait(lock, [this]() -> bool { return !messageQueue.empty() || !isRunning; });
-//
-//         if (!isRunning && messageQueue.empty())
-//             break;
-//
-//         auto item = messageQueue.front();
-//         messageQueue.pop();
-//         lock.unlock();
-//
-//         cv::Mat frame = item.first;
-//         uWS::WebSocket<false, true, PerSocketData> *ws = item.second;
-//
-//         // Process the frame using the detector
-//         detector.detect(frame);
-//
-//         // Encode the processed image to JPEG
-//         std::vector<uchar> buf;
-//         cv::imencode(".jpg", frame, buf);
-//         std::string encodedImage(buf.begin(), buf.end());
-//
-//         // Send back the processed image
-//         ws->send(encodedImage, uWS::OpCode::BINARY);
-//     }
-// }
+void WebSocketServer::workerFunction(uWS::Loop *loop) {
+    try {
+        Detector detector(modelConfiguration, modelWeights, classesFile, confThreshold, nmsThreshold);
+
+        if (!detector.isValid()) {
+            std::cerr << "Detector failed to initialize in worker thread." << std::endl;
+            return;
+        }
+
+        std::cout << "Detector initialized successfully in worker thread." << std::endl;
+
+        while (isRunning) {
+            std::pair<cv::Mat, uint64_t> item;
+
+            // Retrieve a frame from the queue
+            {
+                std::unique_lock<std::mutex> lock(queueMutex);
+                queueCondVar.wait(lock, [this]() { return !frameQueue.empty() || !isRunning; });
+
+                if (!isRunning && frameQueue.empty())
+                    break;
+
+                item = frameQueue.front();
+                frameQueue.pop();
+            }
+
+            cv::Mat frame = item.first;
+            uint64_t clientId = item.second;
+
+            uint64_t frameNumber = nextFrameNumber[clientId]++;
+
+            std::cout << "Processing frame for client ID: " << clientId << " with frame number: " << frameNumber
+                      << std::endl;
+
+            // Process the frame using the detector
+            auto startTime = std::chrono::high_resolution_clock::now();
+            detector.detect(frame);
+            auto endTime = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> diff = endTime - startTime;
+            std::cout << "Frame processing time: " << diff.count() << " seconds" << std::endl;
+
+            std::cout << "Frame processed for client ID: " << clientId << std::endl;
+
+            // Encode the processed image to JPEG
+            std::vector<uchar> buf;
+            if (!cv::imencode(".jpg", frame, buf)) {
+                std::cerr << "Failed to encode image for client ID: " << clientId << std::endl;
+                continue;
+            }
+
+            auto encodedImage = std::make_shared<std::string>(buf.begin(), buf.end());
+
+            {
+                std::lock_guard lock(clientsMutex);
+                frameBuffer[clientId][frameNumber] = encodedImage;
+            }
+
+            // Schedule frame sending
+            loop->defer([this, clientId, frameNumber, loop]() {
+                std::lock_guard lock(clientsMutex);
+
+                auto it = clients.find(clientId);
+                if (it == clients.end()) {
+                    std::cerr << "Client disconnected, unable to send frame for client ID: " << clientId << std::endl;
+                    return;
+                }
+
+                auto *ws = it->second;
+
+                // Check and send frames in order
+                while (lastSentFrame[clientId] + 1 == frameNumber) {
+                    auto &frameQueue = frameBuffer[clientId];
+                    auto it = frameQueue.find(lastSentFrame[clientId] + 1);
+                    if (it != frameQueue.end()) {
+                        // Send the frame
+                        ws->send(*it->second, uWS::OpCode::BINARY);
+                        std::cout << "Sent frame " << it->first << " to client ID: " << clientId << std::endl;
+                        lastSentFrame[clientId]++;
+                        frameQueue.erase(it);
+                    } else {
+                        break;
+                    }
+                }
+            });
+        }
+    } catch (const std::exception &e) {
+        std::cerr << "Exception in worker thread: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "Unknown exception in worker thread." << std::endl;
+    }
+}

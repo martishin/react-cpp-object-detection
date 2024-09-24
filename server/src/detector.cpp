@@ -4,37 +4,40 @@
 
 Detector::Detector(const std::string &modelConfiguration, const std::string &modelWeights,
                    const std::string &classesFile, float confThreshold, float nmsThreshold) :
-    confThreshold(confThreshold), nmsThreshold(nmsThreshold)
-{
+    confThreshold(confThreshold), nmsThreshold(nmsThreshold) {
     // Load names of classes
     std::ifstream ifs(classesFile.c_str());
-    if (!ifs.is_open())
-    {
+    if (!ifs.is_open()) {
         std::cerr << "Error opening classes file: " << classesFile << std::endl;
         return;
     }
     std::string line;
-    while (std::getline(ifs, line))
-    {
+    while (std::getline(ifs, line)) {
         classes.push_back(line);
     }
 
     // Load the network
     net = cv::dnn::readNetFromDarknet(modelConfiguration, modelWeights);
-    if (net.empty())
-    {
+    if (net.empty()) {
         std::cerr << "Error loading network. Check model files." << std::endl;
         return;
     }
     net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
     // You can set the preferable target to DNN_TARGET_CPU or DNN_TARGET_CUDA
     net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+
+    if (net.empty()) {
+        std::cerr << "Error loading network. Check model files." << std::endl;
+        return;
+    }
+
+    valid = true; // Set valid to true if network loaded successfully
 }
 
-void Detector::detect(cv::Mat &frame)
-{
-    if (frame.empty())
-    {
+bool Detector::isValid() const { return valid; }
+
+void Detector::detect(cv::Mat &frame) {
+    if (frame.empty()) {
         std::cerr << "Empty frame provided for detection." << std::endl;
         return;
     }
@@ -55,18 +58,15 @@ void Detector::detect(cv::Mat &frame)
     std::vector<float> confidences;
     std::vector<cv::Rect> boxes;
 
-    for (const auto &out : outs)
-    {
+    for (const auto &out : outs) {
         const float *data = reinterpret_cast<const float *>(out.data);
-        for (int j = 0; j < out.rows; ++j, data += out.cols)
-        {
+        for (int j = 0; j < out.rows; ++j, data += out.cols) {
             cv::Mat scores = out.row(j).colRange(5, out.cols);
             cv::Point classIdPoint;
             double confidence;
 
             cv::minMaxLoc(scores, nullptr, &confidence, nullptr, &classIdPoint);
-            if (confidence > confThreshold)
-            {
+            if (confidence > confThreshold) {
                 int centerX = static_cast<int>(data[0] * frame.cols);
                 int centerY = static_cast<int>(data[1] * frame.rows);
                 int width = static_cast<int>(data[2] * frame.cols);
@@ -85,8 +85,7 @@ void Detector::detect(cv::Mat &frame)
     std::vector<int> indices;
     cv::dnn::NMSBoxes(boxes, confidences, confThreshold, nmsThreshold, indices);
 
-    for (int idx : indices)
-    {
+    for (int idx : indices) {
         cv::Rect box = boxes[idx];
 
         // Ensure the box is within the image boundaries
@@ -97,8 +96,7 @@ void Detector::detect(cv::Mat &frame)
 
         // Get the label for the class name and its confidence
         std::string label = cv::format("%.2f", confidences[idx]);
-        if (!classes.empty() && classIds[idx] < static_cast<int>(classes.size()))
-        {
+        if (!classes.empty() && classIds[idx] < static_cast<int>(classes.size())) {
             label = classes[classIds[idx]] + ": " + label;
         }
 
