@@ -1,25 +1,21 @@
 #include "ws_server.h"
 #include <iostream>
-#include <utility>
 
-// Constructor
 WebSocketServer::WebSocketServer(const int port, std::string modelConfiguration, std::string modelWeights,
                                  std::string classesFile, const float confThreshold, const float nmsThreshold) :
     port(port), isRunning(true), numThreads(std::thread::hardware_concurrency()),
     modelConfiguration(std::move(modelConfiguration)), modelWeights(std::move(modelWeights)),
     classesFile(std::move(classesFile)), confThreshold(confThreshold), nmsThreshold(nmsThreshold), clientIdCounter(0) {
     if (numThreads == 0) {
-        numThreads = 4; // Default to 4 threads if hardware_concurrency can't detect
+        numThreads = 4;
     }
     std::cout << "WebSocketServer initialized with " << numThreads << " worker threads." << std::endl;
 }
 
-// Destructor
 WebSocketServer::~WebSocketServer() {
     isRunning = false;
     queueCondVar.notify_all();
 
-    // Join worker threads
     for (auto &thread : workerThreads) {
         if (thread.joinable()) {
             thread.join();
@@ -29,7 +25,6 @@ WebSocketServer::~WebSocketServer() {
 }
 
 void WebSocketServer::run() {
-    // Start worker threads
     uWS::Loop *loop = uWS::Loop::get();
 
     for (int i = 0; i < numThreads; ++i) {
@@ -49,8 +44,8 @@ void WebSocketServer::run() {
                                     {
                                         std::lock_guard<std::mutex> lock(clientsMutex);
                                         clients[clientId] = ws;
-                                        lastSentFrame[clientId] = 0; // Initialize last sent frame number to 0
-                                        nextFrameNumber[clientId] = 1; // Initialize next frame number
+                                        lastSentFrame[clientId] = 0;
+                                        nextFrameNumber[clientId] = 1;
                                     }
 
                                     std::cout << "Client connected, ID: " << clientId << std::endl;
@@ -91,7 +86,7 @@ void WebSocketServer::run() {
                                     {
                                         std::lock_guard<std::mutex> lock(clientsMutex);
                                         clients.erase(clientId);
-                                        frameBuffer.erase(clientId); // Clean up the frame buffer
+                                        frameBuffer.erase(clientId);
                                         lastSentFrame.erase(clientId);
                                         nextFrameNumber.erase(clientId);
                                     }
@@ -108,7 +103,6 @@ void WebSocketServer::run() {
                 })
         .run();
 
-    // Stop the server
     isRunning = false;
     queueCondVar.notify_all();
 }
@@ -127,10 +121,9 @@ void WebSocketServer::workerFunction(uWS::Loop *loop) {
         while (isRunning) {
             std::pair<cv::Mat, uint64_t> item;
 
-            // Retrieve a frame from the queue
             {
-                std::unique_lock<std::mutex> lock(queueMutex);
-                queueCondVar.wait(lock, [this]() { return !frameQueue.empty() || !isRunning; });
+                std::unique_lock lock(queueMutex);
+                queueCondVar.wait(lock, [this] { return !frameQueue.empty() || !isRunning; });
 
                 if (!isRunning && frameQueue.empty())
                     break;
@@ -147,7 +140,6 @@ void WebSocketServer::workerFunction(uWS::Loop *loop) {
             std::cout << "Processing frame for client ID: " << clientId << " with frame number: " << frameNumber
                       << std::endl;
 
-            // Process the frame using the detector
             auto startTime = std::chrono::high_resolution_clock::now();
             detector.detect(frame);
             auto endTime = std::chrono::high_resolution_clock::now();
@@ -156,25 +148,22 @@ void WebSocketServer::workerFunction(uWS::Loop *loop) {
 
             std::cout << "Frame processed for client ID: " << clientId << std::endl;
 
-            // Encode the processed image to JPEG
             std::vector<uchar> buf;
-            if (!cv::imencode(".jpg", frame, buf)) {
+            if (!imencode(".jpg", frame, buf)) {
                 std::cerr << "Failed to encode image for client ID: " << clientId << std::endl;
                 continue;
             }
 
-            auto encodedImage = std::make_shared<std::string>(buf.begin(), buf.end());
-
             {
+                const auto encodedImage = std::make_shared<std::string>(buf.begin(), buf.end());
                 std::lock_guard lock(clientsMutex);
                 frameBuffer[clientId][frameNumber] = encodedImage;
             }
 
-            // Schedule frame sending
             loop->defer([this, clientId, frameNumber, loop]() {
                 std::lock_guard lock(clientsMutex);
 
-                auto it = clients.find(clientId);
+                const auto it = clients.find(clientId);
                 if (it == clients.end()) {
                     std::cerr << "Client disconnected, unable to send frame for client ID: " << clientId << std::endl;
                     return;
@@ -185,7 +174,7 @@ void WebSocketServer::workerFunction(uWS::Loop *loop) {
                 // Check and send frames in order
                 while (lastSentFrame[clientId] + 1 == frameNumber) {
                     auto &frameQueue = frameBuffer[clientId];
-                    auto it = frameQueue.find(lastSentFrame[clientId] + 1);
+                    const auto it = frameQueue.find(lastSentFrame[clientId] + 1);
                     if (it != frameQueue.end()) {
                         // Send the frame
                         ws->send(*it->second, uWS::OpCode::BINARY);

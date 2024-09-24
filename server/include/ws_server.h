@@ -4,7 +4,6 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
-#include <mutex>
 #include <opencv2/opencv.hpp>
 #include <queue>
 #include <thread>
