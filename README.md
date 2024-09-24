@@ -26,8 +26,8 @@ This project demonstrates a real-time object detection system using a C++ **WebS
     git clone https://github.com/microsoft/vcpkg.git
     cd vcpkg
     ./bootstrap-vcpkg.sh
-   cd ..
-   export VCPKG_ROOT=$(pwd)/vcpkg
+    cd ..
+    export VCPKG_ROOT=$(pwd)/vcpkg
     ```
 3. Install server dependencies  
    Navigate to the server folder and install dependencies:
