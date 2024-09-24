@@ -3,6 +3,8 @@
 
 This project demonstrates a real-time object detection system using a C++ **WebSocket server** with **YOLO** for object detection, and a **React client** with Webcam integration for capturing and sending video frames. The server uses **OpenCV** to process frames and the **YOLO model** for detecting objects in the video stream.
 
+<img src="https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExcWw2cHFycnAwbHJ2dzhma2ZieWc4OHpkdXk0dDYxdWZhNm95aWZuNiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/8uwQcYcTHGawVJrvXz/giphy.gif" width="500"/>
+
 ## Running Locally
 
 ### Prerequisites
