@@ -38,7 +38,6 @@ const Camera = () => {
   }, [])
 
   const connectWebSocket = useCallback(() => {
-    // Close existing connection if any
     if (socketRef.current) {
       socketRef.current.close()
     }
@@ -49,7 +48,6 @@ const Camera = () => {
       console.log("WebSocket connection established")
       setIsConnected(true)
 
-      // Start sending frames
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
       }
@@ -75,7 +73,6 @@ const Camera = () => {
       console.log("WebSocket connection closed")
       setIsConnected(false)
 
-      // Stop sending frames
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
@@ -83,7 +80,6 @@ const Camera = () => {
     }
   }, [sendFramesToBackend])
 
-  // Clean up on component unmount
   useEffect(() => {
     return () => {
       if (intervalRef.current) {
