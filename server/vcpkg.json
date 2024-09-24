@@ -1,0 +1,20 @@
+{
+    "name": "ws-yolo-server",
+    "version-string": "1.0.0",
+    "dependencies": [
+        {
+            "name": "opencv",
+            "default-features": false,
+            "features": [
+                "contrib",
+                "dnn"
+            ]
+        },
+        "uwebsockets",
+        "usockets",
+        "openssl",
+        "zlib",
+        "libuv"
+    ],
+    "builtin-baseline": "98aa6396292d57e737a6ef999d4225ca488859d5"
+}

@@ -70,7 +70,7 @@ const Camera = () => {
 
   // 60 FPS
   useEffect(() => {
-    const intervalId = setInterval(sendFramesToBackend, 16)
+    const intervalId = setInterval(sendFramesToBackend, 500)
     return () => clearInterval(intervalId)
   }, [sendFramesToBackend])
 
