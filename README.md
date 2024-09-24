@@ -39,6 +39,7 @@ This project demonstrates a real-time object detection system using a C++ **WebS
     ```bash
     make run-server
     ```
+    The server will be running at `ws://localhost:8080/ws`
 
 5. **Running the React client**  
     Navigate to the client folder and install dependencies:
@@ -49,7 +50,7 @@ This project demonstrates a real-time object detection system using a C++ **WebS
     npm run dev
     ```
 
-    The client will be running at `http://localhost:5173/`.
+    The client will be running at `http://localhost:5173/`
 
 ## Technologies Used
 
