@@ -13,39 +13,8 @@ const Camera = () => {
   const webcamRef = useRef<Webcam>(null)
   const [receivedImage, setReceivedImage] = useState<string | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
-
-  useEffect(() => {
-    socketRef.current = new WebSocket(WEBSOCKET_SERVER_URL)
-
-    socketRef.current.onopen = () => {
-      console.log("WebSocket connection established")
-    }
-
-    socketRef.current.onmessage = (event) => {
-      console.log("Received data from server")
-      const blob = event.data as Blob
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string
-        setReceivedImage(dataUrl)
-      }
-      reader.readAsDataURL(blob)
-    }
-
-    socketRef.current.onerror = (error) => {
-      console.error("WebSocket error:", error)
-    }
-
-    socketRef.current.onclose = () => {
-      console.log("WebSocket connection closed")
-    }
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.close()
-      }
-    }
-  }, [])
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const [isConnected, setIsConnected] = useState<boolean>(false)
 
   const sendFramesToBackend = useCallback(() => {
     if (webcamRef.current && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
@@ -66,13 +35,66 @@ const Camera = () => {
     } else {
       console.log("Webcam not ready or WebSocket not open")
     }
-  }, [webcamRef, socketRef])
+  }, [])
 
-  // 60 FPS
-  useEffect(() => {
-    const intervalId = setInterval(sendFramesToBackend, 500)
-    return () => clearInterval(intervalId)
+  const connectWebSocket = useCallback(() => {
+    // Close existing connection if any
+    if (socketRef.current) {
+      socketRef.current.close()
+    }
+
+    socketRef.current = new WebSocket(WEBSOCKET_SERVER_URL)
+
+    socketRef.current.onopen = () => {
+      console.log("WebSocket connection established")
+      setIsConnected(true)
+
+      // Start sending frames
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+      intervalRef.current = setInterval(sendFramesToBackend, 300)
+    }
+
+    socketRef.current.onmessage = (event) => {
+      console.log("Received data from server")
+      const blob = event.data as Blob
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string
+        setReceivedImage(dataUrl)
+      }
+      reader.readAsDataURL(blob)
+    }
+
+    socketRef.current.onerror = (error) => {
+      console.error("WebSocket error:", error)
+    }
+
+    socketRef.current.onclose = () => {
+      console.log("WebSocket connection closed")
+      setIsConnected(false)
+
+      // Stop sending frames
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
   }, [sendFramesToBackend])
+
+  // Clean up on component unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+      if (socketRef.current) {
+        socketRef.current.close()
+      }
+    }
+  }, [])
 
   return (
     <>
@@ -85,13 +107,12 @@ const Camera = () => {
       />
       {receivedImage ? (
         <div>
-          <div>
-            <img src={receivedImage} alt="Processed Screenshot" />
-          </div>
+          <img src={receivedImage} alt="Processed Screenshot" />
         </div>
       ) : (
         <p>Waiting for processed image...</p>
       )}
+      <button onClick={connectWebSocket}>{isConnected ? "Reconnect" : "Connect"}</button>
     </>
   )
 }
