@@ -20,7 +20,8 @@ This project demonstrates a real-time object detection system using a C++ **WebS
     cd react-cpp-object-detection
     ```
    
-2. Install and configure vcpkg
+2. Install and configure vcpkg  
+   Navigate to the server folder and install vcpkg
    ```bash
     cd server
     git clone https://github.com/microsoft/vcpkg.git
@@ -29,8 +30,7 @@ This project demonstrates a real-time object detection system using a C++ **WebS
     cd ..
     export VCPKG_ROOT=$(pwd)/vcpkg
     ```
-3. Install server dependencies  
-   Navigate to the server folder and install dependencies:
+3. Install server dependencies
    ```bash
     vcpkg install
     ```
@@ -40,7 +40,7 @@ This project demonstrates a real-time object detection system using a C++ **WebS
     make run-server
     ```
 
-5. **Running the React client**
+5. **Running the React client**  
     Navigate to the client folder and install dependencies:
 
     ```bash
